@@ -170,17 +170,18 @@ Connector imported with `Push-ToDevelopment.ps1` into a DEV environment, with a 
 | 4.7 MB PNG (6.3 MB request) | 200 in 16 s; custom code did not time out |
 | 7.4 MB and 16 MiB PNGs (9.8 MB and 22.3 MB requests) | Passed the platform and the custom code, then 429 `RateLimitReached` from Foundry. Direct calls behaved the same: Foundry reserves about 0.25 tokens per request byte against the 2.25M tokens-per-minute quota. |
 | Power Automate flow: `base64ToBinary()` image, base64 text image, undersized image | Run succeeded. Binary and text content both worked after the double-encoding fix: space 0.86, same scene 0.995, subject `astronaut`. The undersized image returned 400 `invalid_image_dimensions` (330x262) to the flow. `body('Evaluate_with_Microsoft-Decision-1.1')` works in expressions. |
+| Manual designer checks (see below), including an **Images** row bound to **Get file content** | Passed |
 
 Wikimedia returns 429 to the Power Automate HTTP action, so the flow embeds small thumbnails of the stock images instead of downloading them.
 
-### Still requires a manual designer check
+### Manual designer checks
 
-The designer resolves the dynamic schema client-side, so you need to check it in the browser:
+The designer resolves the dynamic schema client-side, so these checks run in the browser. All passed on DEV on 2026-11-20:
 
-- [ ] In the Power Automate designer, add **Evaluate with Jev** with noul, choice, and score rows. Confirm that dynamic tokens appear for each question and option. This shows that the `body/questions` reference resolves for `x-ms-dynamic-properties`. (An earlier version referenced the object `body/definition`, which the designer flattens into leaf parameters, so it failed with *Parameter "body/definition" cannot be found*.)
-- [ ] Switch **Questions** to the entire-array input and confirm the action falls back to the generic outputs.
-- [ ] Copilot Studio: add the connector to a workflow, call `Evaluate`, and confirm the expected answers are available to subsequent steps.
-- [ ] Repeat the checks above for **Evaluate with Microsoft-Decision-1.1**, and confirm that the connection dialog shows the endpoint, deployment name, and API key fields.
-- [ ] In the designer, add **Evaluate with Microsoft-Decision-1.1** with an **Images** row bound to **File content** from OneDrive or SharePoint **Get file content**, and check the default action name the designer generates.
+- [x] In the Power Automate designer, add **Evaluate with Jev** with noul, choice, and score rows. Confirm that dynamic tokens appear for each question and option. This shows that the `body/questions` reference resolves for `x-ms-dynamic-properties`. (An earlier version referenced the object `body/definition`, which the designer flattens into leaf parameters, so it failed with *Parameter "body/definition" cannot be found*.)
+- [x] Switch **Questions** to the entire-array input and confirm the action falls back to the generic outputs.
+- [x] Copilot Studio: add the connector to a workflow, call `Evaluate`, and confirm the expected answers are available to subsequent steps.
+- [x] Repeat the checks above for **Evaluate with Microsoft-Decision-1.1**, and confirm that the connection dialog shows the endpoint, deployment name, and API key fields.
+- [x] In the designer, add **Evaluate with Microsoft-Decision-1.1** with an **Images** row bound to **File content** from OneDrive or SharePoint **Get file content**, and check the default action name the designer generates.
 
 Canvas apps are intentionally excluded from the verification checklist because they have not yet been tested.
