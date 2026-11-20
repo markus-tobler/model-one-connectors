@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in improving the TypeSafe Jev and Microsoft-Decision-1 custom connectors. Bug reports, documentation fixes, and pull requests are welcome.
+Thanks for your interest in improving the TypeSafe Jev and Microsoft-Decision-1.1 custom connectors. Bug reports, documentation fixes, and pull requests are welcome.
 
 ## Reporting issues
 

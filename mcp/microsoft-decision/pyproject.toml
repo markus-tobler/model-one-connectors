@@ -1,7 +1,7 @@
 [project]
 name = "microsoft-decision-mcp"
-version = "0.1.0"
-description = "Local MCP server that evaluates state against yes/no, choice, and score questions with a Microsoft-Decision-1 deployment in Microsoft Foundry."
+version = "0.2.0"
+description = "Local MCP server that evaluates state and images against yes/no, choice, and score questions with a Microsoft-Decision-1.1 deployment in Microsoft Foundry."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"

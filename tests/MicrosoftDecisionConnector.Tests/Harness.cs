@@ -52,5 +52,7 @@ internal static class Harness
 
     public static string Fixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", name));
 
+    public static byte[] Asset(string name) => File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Assets", name));
+
     public static string Connector(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Connector", name));
 }

@@ -1,1 +1,1 @@
-"""Local MCP server for Microsoft-Decision-1 in Microsoft Foundry."""
+"""Local MCP server for Microsoft-Decision-1.1 in Microsoft Foundry."""

@@ -90,7 +90,7 @@ jobs:
           retention-days: 7
 
   mcp:
-    name: Test Microsoft-Decision-1 MCP server
+    name: Test Microsoft-Decision-1.1 MCP server
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

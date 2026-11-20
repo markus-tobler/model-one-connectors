@@ -18,7 +18,7 @@ The repository contains one solution per connector. `scripts/EnvironmentConfig.p
 | Solution | Connector | Tests |
 | --- | --- | --- |
 | `JevCustomConnector` | `mto_jevv1connector` (TypeSafe Jev v1) | `tests/JevConnector.Tests` |
-| `MicrosoftDecisionCustomConnector` | `mto_msdecision1connector` (Microsoft-Decision-1) | `tests/MicrosoftDecisionConnector.Tests` |
+| `MicrosoftDecisionCustomConnector` | `mto_msdecision1connector` (Microsoft-Decision-1; actions say 1.1) | `tests/MicrosoftDecisionConnector.Tests` |
 
 Each solution has the same layout:
 
@@ -31,19 +31,23 @@ Each solution has the same layout:
 
 The two `.csx` files are independent copies. Custom code must be a single self-contained file, and keeping each one complete lets `Sync-FromDevelopment.ps1` round-trip portal edits. Most of the logic (question rows, validation, and schema generation) is the same in both, so apply a fix to both files when it concerns shared behavior.
 
-### Microsoft-Decision-1 specifics
+### Microsoft-Decision-1.1 specifics
 
-The Microsoft-Decision-1 decision API accepts the same `state` and `questions` as Jev and returns the same `answers`. The connector differs from the Jev connector as follows:
+The Microsoft-Decision-1.1 decision API accepts the same `state` and `questions` as Jev and returns the same `answers`. The connector differs from the Jev connector as follows:
 
 - **Endpoint:** each Foundry resource has its own host. A `dynamichosturl` policy routes requests to the `endpoint` connection parameter. The script keeps only the scheme, host, and port and sets the path to `/providers/microsoft/v1/systemone`, so a pasted target URI or project endpoint also works.
 - **Deployment:** the request `model` is the deployment name. A `setheader` policy copies the `deployment` connection parameter into the `x-connector-deployment` header, and the script moves it into `model`. The header is not forwarded to Foundry. Policies run before custom code, which was verified on DEV.
 - **Auth:** the API key is sent in the `api-key` header. Entra ID is not supported yet.
 - **Operations:** there is no models endpoint on the data plane, so `ListModels` and `GetModelChoices` do not exist.
 - **Limits:** a choice question needs 2-255 options. Jev accepts 1 option.
+- **Images:** the `images` input (rows of `name` and `content`, or a native `assets` object) becomes the native `assets` object. The script reads the format and pixel size from the PNG or JPEG header, without decoding the image. It enforces the API's limits locally: still PNG or JPEG, 280-1568 pixels per side, at most 16 MiB each. The decision API rejects a request that references only some of its images (`assets are never referenced`), so the script appends `image:<name>` to text state for every image that no string in the state or questions references. It does not change JSON state; that case is an `unreferenced_image` error.
+- **Display name:** the connector's `displayname` in `mto_msdecision1connector.xml` stays `Microsoft-Decision-1`. A solution import fails with *The connector display name attribute cannot be changed* when it differs from an installed connector. The OpenAPI title, action summaries, and descriptions say 1.1.
+- **Double-encoded content:** Power Automate base64-encodes text that a flow passes to the `format: byte` image content, so base64 text from an expression arrives encoded twice. A binary value, such as `base64ToBinary()` or **Get file content** output, arrives once as a `$content` object. When the decoded bytes are base64 text that hides a PNG or JPEG, the script decodes once more.
+- **Image reference limit:** the service allows at most 8 image references per question prompt and counts repeated references. Its count can be higher than the number of references in the request, especially with very short image names, so the connector does not check it and passes the service's 400 `invalid_image` through.
 
-### Microsoft-Decision-1 MCP server
+### Microsoft-Decision-1.1 MCP server
 
-`mcp/microsoft-decision` is a Python stdio MCP server, built on the official `mcp` SDK (`MCPServer`), that calls the same decision API as the connector. It is not part of a solution and cannot reuse the `.csx`, so it repeats the connector's endpoint normalization (scheme, host, and port only) and validation limits. Its one tool, `evaluate`, takes the native `questions` object; the question-row format exists only for the Power Automate designer. Keep the limits in both places in sync. See its [README](../mcp/microsoft-decision/README.md) for configuration.
+`mcp/microsoft-decision` is a Python stdio MCP server, built on the official `mcp` SDK (`MCPServer`), that calls the same decision API as the connector. It is not part of a solution and cannot reuse the `.csx`, so it repeats the connector's endpoint normalization (scheme, host, and port only) and validation limits. Its one tool, `evaluate`, takes the native `questions` object; the question-row format exists only for the Power Automate designer. Keep the limits in both places in sync, including the image rules in `images.py`, which mirror the `.csx`: header inspection, size and dimension limits, name rules, and image references. Only the double-encoding fallback is connector-specific, because only Power Automate adds the second base64 layer. Image tests in both projects use the real files in `tests/assets`. See its [README](../mcp/microsoft-decision/README.md) for configuration.
 
 ## Tests
 
@@ -146,13 +150,38 @@ To reproduce these checks:
 
 The checks used the same API calls as the Jev checks. The connection parameters are `endpoint`, `deployment`, and `api_key`.
 
-### Still requires a manual designer check
+### Microsoft-Decision-1.1: verified on a DEV environment (2026-11-20)
 
-The designer resolves the dynamic schema client-side, so you need to check it in the browser:
+Connector imported with `Push-ToDevelopment.ps1` into a DEV environment, with a new connection to a `Microsoft-Decision-1.1` deployment. The calls went through the connector runtime, so the policies and the custom code ran.
 
-- [ ] In the Power Automate designer, add **Evaluate with Jev** with noul, choice, and score rows. Confirm that dynamic tokens appear for each question and option. This shows that the `body/questions` reference resolves for `x-ms-dynamic-properties`. (An earlier version referenced the object `body/definition`, which the designer flattens into leaf parameters, so it failed with *Parameter "body/definition" cannot be found*.)
-- [ ] Switch **Questions** to the entire-array input and confirm the action falls back to the generic outputs.
-- [ ] Copilot Studio: add the connector to a workflow, call `Evaluate`, and confirm the expected answers are available to subsequent steps.
-- [ ] Repeat the checks above for **Evaluate with Microsoft-Decision-1**, and confirm that the connection dialog shows the endpoint, deployment name, and API key fields.
+| Check | Result |
+| --- | --- |
+| Import with the connector display name changed to `Microsoft-Decision-1.1` | Failed: *The connector display name attribute cannot be changed.* The `displayname` stays `Microsoft-Decision-1`. |
+| `Evaluate` with text question rows | 200 from `microsoft-decision-1.1`, same response shape as Microsoft-Decision-1 |
+| `GetOutputSchema` with images in the body | 200, question-specific schema |
+| Image rows (base64), unreferenced image appended to state | 200: cat 0.995, dog 0.0002 |
+| Two images referenced in choice option descriptions | 200, selected the astronaut picture with 0.999 |
+| `$content` file object and `data:` URI content | 200 |
+| Native `assets` object with `format: jpg` and JSON state | 200 |
+| `EvaluateJson` with an image | 200, `responseJson` parses |
+| 200x200 PNG | 400 `invalid_image_dimensions` from the connector, no Foundry call |
+| JSON state with an unreferenced image | 400 `unreferenced_image` |
+| Four images across four questions | 200 in 8 s, 2.6 MB request |
+| 4.7 MB PNG (6.3 MB request) | 200 in 16 s; custom code did not time out |
+| 7.4 MB and 16 MiB PNGs (9.8 MB and 22.3 MB requests) | Passed the platform and the custom code, then 429 `RateLimitReached` from Foundry. Direct calls behaved the same: Foundry reserves about 0.25 tokens per request byte against the 2.25M tokens-per-minute quota. |
+| Power Automate flow: `base64ToBinary()` image, base64 text image, undersized image | Run succeeded. Binary and text content both worked after the double-encoding fix: space 0.86, same scene 0.995, subject `astronaut`. The undersized image returned 400 `invalid_image_dimensions` (330x262) to the flow. `body('Evaluate_with_Microsoft-Decision-1.1')` works in expressions. |
+| Manual designer checks (see below), including an **Images** row bound to **Get file content** | Passed |
+
+Wikimedia returns 429 to the Power Automate HTTP action, so the flow embeds small thumbnails of the stock images instead of downloading them.
+
+### Manual designer checks
+
+The designer resolves the dynamic schema client-side, so these checks run in the browser. All passed on DEV on 2026-11-20:
+
+- [x] In the Power Automate designer, add **Evaluate with Jev** with noul, choice, and score rows. Confirm that dynamic tokens appear for each question and option. This shows that the `body/questions` reference resolves for `x-ms-dynamic-properties`. (An earlier version referenced the object `body/definition`, which the designer flattens into leaf parameters, so it failed with *Parameter "body/definition" cannot be found*.)
+- [x] Switch **Questions** to the entire-array input and confirm the action falls back to the generic outputs.
+- [x] Copilot Studio: add the connector to a workflow, call `Evaluate`, and confirm the expected answers are available to subsequent steps.
+- [x] Repeat the checks above for **Evaluate with Microsoft-Decision-1.1**, and confirm that the connection dialog shows the endpoint, deployment name, and API key fields.
+- [x] In the designer, add **Evaluate with Microsoft-Decision-1.1** with an **Images** row bound to **File content** from OneDrive or SharePoint **Get file content**, and check the default action name the designer generates.
 
 Canvas apps are intentionally excluded from the verification checklist because they have not yet been tested.

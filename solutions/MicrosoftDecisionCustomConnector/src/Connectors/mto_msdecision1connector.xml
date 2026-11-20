@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Connector xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <connectorid>9d6d562c-cf36-4bcc-b642-9942a711a189</connectorid>
-  <description>Evaluate text or JSON with the Microsoft-Decision-1 model in Microsoft Foundry and get typed answers to yes/no, choice, and score questions.</description>
+  <description>Evaluate text, JSON, or images with the Microsoft-Decision-1.1 model in Microsoft Foundry and get typed answers to yes/no, choice, and score questions.</description>
   <displayname>Microsoft-Decision-1</displayname>
   <iconbrandcolor>#0078d4</iconbrandcolor>
   <name>mto_msdecision1connector</name>
