@@ -16,7 +16,7 @@
     "type": "string",
     "uiDefinition": {
       "displayName": "Deployment name",
-      "description": "The name of your Microsoft-Decision-1 deployment, for example Decision-1.",
+      "description": "The name of your Microsoft-Decision-1.1 deployment, for example Decision-1.1.",
       "tooltip": "The deployment name, not the model name. Create a separate connection to use another deployment.",
       "constraints": {
         "tabIndex": 2,

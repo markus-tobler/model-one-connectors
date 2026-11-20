@@ -15,6 +15,13 @@ public class Script : ScriptBase
     private const int MinScoreLevels = 2;
     private const int MaxScoreLevels = 10;
 
+    // Image limits of the decision API: still PNG or JPEG, 280 to 1568 pixels per side, 16 MiB each.
+    private const int MinImageSide = 280;
+    private const int MaxImageSide = 1568;
+    private const int MaxImageBytes = 16 * 1024 * 1024;
+    private const int MaxImageNameLength = 64;
+    private const string ImageReferencePrefix = "image:";
+
     private static readonly string[] KnownOperations =
     {
         EvaluateOperation,
@@ -31,7 +38,7 @@ public class Script : ScriptBase
     public override async Task<HttpResponseMessage> ExecuteAsync()
     {
         var operationId = ResolveOperationId(this.Context.OperationId);
-        this.Context.Logger.LogInformation("Microsoft-Decision-1 connector operation {operationId}", operationId ?? "unknown");
+        this.Context.Logger.LogInformation("Microsoft-Decision-1.1 connector operation {operationId}", operationId ?? "unknown");
 
         try
         {
@@ -49,7 +56,7 @@ public class Script : ScriptBase
         }
         catch (ConnectorException ex)
         {
-            this.Context.Logger.LogWarning("Microsoft-Decision-1 connector rejected request: {code} at {path}", ex.Code, ex.Path ?? string.Empty);
+            this.Context.Logger.LogWarning("Microsoft-Decision-1.1 connector rejected request: {code} at {path}", ex.Code, ex.Path ?? string.Empty);
             return CreateError(ex.StatusCode, ex.Code, ex.Message, ex.Path);
         }
     }
@@ -70,7 +77,7 @@ public class Script : ScriptBase
         request.Content = CreateJsonContent(payload.ToString(Newtonsoft.Json.Formatting.None));
 
         var upstream = await this.Context.SendAsync(request, this.CancellationToken).ConfigureAwait(false);
-        this.Context.Logger.LogInformation("Microsoft-Decision-1 evaluation returned {status}", (int)upstream.StatusCode);
+        this.Context.Logger.LogInformation("Microsoft-Decision-1.1 evaluation returned {status}", (int)upstream.StatusCode);
 
         if (!wrapAsJson || !upstream.IsSuccessStatusCode)
         {
@@ -212,12 +219,469 @@ public class Script : ScriptBase
 
     internal static JObject BuildSystemOnePayload(JObject body, string deployment)
     {
-        return new JObject
+        var state = NormalizeState(body);
+        var questions = NormalizeQuestions(body["questions"], "questions");
+        var payload = new JObject
         {
             ["model"] = deployment,
-            ["state"] = NormalizeState(body),
-            ["questions"] = NormalizeQuestions(body["questions"], "questions")
+            ["state"] = state,
+            ["questions"] = questions
         };
+
+        Dictionary<string, string> imagePaths;
+        var assets = NormalizeImages(body, out imagePaths);
+        if (assets != null)
+        {
+            payload["state"] = ReferenceImages(state, questions, imagePaths);
+            payload["assets"] = assets;
+        }
+
+        return payload;
+    }
+
+    // Images arrive as connector rows (images), as a native assets object (images or assets), or
+    // as JSON text of either. Each is validated locally and sent as a native image asset.
+    internal static JObject NormalizeImages(JObject body, out Dictionary<string, string> imagePaths)
+    {
+        imagePaths = new Dictionary<string, string>(StringComparer.Ordinal);
+        var images = body["images"];
+        var assets = body["assets"];
+        var path = "images";
+        if (IsEmptyImages(images))
+        {
+            images = assets;
+            path = "assets";
+        }
+        else if (!IsEmptyImages(assets))
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "conflicting_images", "Provide images or assets, not both.", "assets");
+        }
+
+        if (IsEmptyImages(images))
+        {
+            return null;
+        }
+
+        if (images.Type == JTokenType.String)
+        {
+            try
+            {
+                images = ParseJson((string)images);
+            }
+            catch (JsonException)
+            {
+                throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_images_json", "The images text is not valid JSON.", path);
+            }
+
+            if (IsEmptyImages(images))
+            {
+                return null;
+            }
+        }
+
+        var normalized = new JObject();
+        if (images.Type == JTokenType.Array)
+        {
+            var rows = (JArray)images;
+            for (var index = 0; index < rows.Count; index++)
+            {
+                var rowPath = path + "[" + index + "]";
+                var row = rows[index] as JObject;
+                if (row == null)
+                {
+                    throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_image", "Each image must be an object with a name and content.", rowPath);
+                }
+
+                var name = ReadOptionalString(row["name"], rowPath + ".name");
+                AddImage(normalized, imagePaths, name, row["content"], ReadOptionalString(row["format"], rowPath + ".format"), rowPath, rowPath + ".content");
+            }
+        }
+        else if (images.Type == JTokenType.Object)
+        {
+            foreach (var property in ((JObject)images).Properties())
+            {
+                var assetPath = path + "['" + property.Name + "']";
+                var asset = property.Value as JObject;
+                if (asset == null)
+                {
+                    throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_image", "Each asset must be an object with type, format, and data_base64.", assetPath);
+                }
+
+                var type = ReadOptionalString(asset["type"], assetPath + ".type");
+                if (type != null && type != "image")
+                {
+                    throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_asset_type", "Only image assets are supported.", assetPath + ".type");
+                }
+
+                AddImage(normalized, imagePaths, property.Name, asset["data_base64"], ReadOptionalString(asset["format"], assetPath + ".format"), assetPath, assetPath + ".data_base64");
+            }
+        }
+        else
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_images", "Images must be a list of image rows or an assets object keyed by image name.", path);
+        }
+
+        return normalized.Count == 0 ? null : normalized;
+    }
+
+    private static bool IsEmptyImages(JToken images)
+    {
+        return images == null
+            || images.Type == JTokenType.Null
+            || images.Type == JTokenType.Undefined
+            || (images.Type == JTokenType.String && string.IsNullOrWhiteSpace((string)images))
+            || (images.Type == JTokenType.Array && ((JArray)images).Count == 0)
+            || (images.Type == JTokenType.Object && ((JObject)images).Count == 0);
+    }
+
+    private static void AddImage(JObject assets, Dictionary<string, string> imagePaths, string name, JToken content, string format, string path, string contentPath)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "missing_image_name", "Each image needs a name.", path + ".name");
+        }
+
+        if (name.Length > MaxImageNameLength || !name.All(IsImageNameChar))
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_image_name", "Image names may contain only letters, digits, '.', '_', and '-', with at most " + MaxImageNameLength + " characters.", path + ".name");
+        }
+
+        if (assets.Property(name) != null)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "duplicate_image_name", "Image name '" + name + "' is used more than once.", path + ".name");
+        }
+
+        var data = DecodeImageContent(content, contentPath);
+        int width;
+        int height;
+        var detected = InspectImage(data, contentPath, out width, out height);
+
+        if (!string.IsNullOrWhiteSpace(format))
+        {
+            var requested = NormalizeImageFormat(format);
+            if (requested == null)
+            {
+                throw new ConnectorException(HttpStatusCode.BadRequest, "unsupported_image_format", "Images must be PNG or JPEG.", path + ".format");
+            }
+
+            if (requested != detected)
+            {
+                throw new ConnectorException(HttpStatusCode.BadRequest, "image_format_mismatch", "The image content is " + detected.ToUpperInvariant() + ", not " + requested.ToUpperInvariant() + ".", path + ".format");
+            }
+        }
+
+        if (width < MinImageSide || height < MinImageSide || width > MaxImageSide || height > MaxImageSide)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_image_dimensions", "The image is " + width + "x" + height + " pixels; each side must be between " + MinImageSide + " and " + MaxImageSide + " pixels.", contentPath);
+        }
+
+        assets[name] = new JObject
+        {
+            ["type"] = "image",
+            ["format"] = detected,
+            ["data_base64"] = Convert.ToBase64String(data)
+        };
+        imagePaths[name] = path;
+    }
+
+    private static string NormalizeImageFormat(string format)
+    {
+        switch (format.Trim().ToLowerInvariant())
+        {
+            case "png":
+            case "image/png":
+                return "png";
+            case "jpeg":
+            case "jpg":
+            case "image/jpeg":
+                return "jpeg";
+            default:
+                return null;
+        }
+    }
+
+    // Accepts base64 text, a data URI, or a Power Automate file object ({"$content-type", "$content"}).
+    internal static byte[] DecodeImageContent(JToken content, string path)
+    {
+        var file = content as JObject;
+        if (file != null)
+        {
+            content = file["$content"];
+        }
+
+        if (content == null || content.Type == JTokenType.Null || content.Type == JTokenType.Undefined)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "missing_image_content", "Each image needs content.", path);
+        }
+
+        if (content.Type != JTokenType.String)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_image_content", "The image content must be base64 text or file content.", path);
+        }
+
+        var text = StripDataUri(((string)content).Trim(), path);
+        if (text.Length == 0)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "missing_image_content", "Each image needs content.", path);
+        }
+
+        // Reject oversized input before decoding it. The slack allows whitespace and the second
+        // base64 layer described below.
+        if (text.Length > 2L * (((long)MaxImageBytes + 2) / 3) * 4)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "image_too_large", "Each image may be at most 16 MiB.", path);
+        }
+
+        var data = DecodeBase64(text, path);
+
+        // Power Automate base64-encodes text that a flow passes to a byte parameter, so base64 text
+        // from an expression arrives encoded twice. Undo the second layer when it hides an image.
+        if (!IsSupportedImage(data) && data.All(value => value < 0x80))
+        {
+            try
+            {
+                var nested = DecodeBase64(StripDataUri(Encoding.ASCII.GetString(data).Trim(), path), path);
+                if (IsSupportedImage(nested))
+                {
+                    data = nested;
+                }
+            }
+            catch (ConnectorException)
+            {
+            }
+        }
+
+        if (data.Length > MaxImageBytes)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "image_too_large", "Each image may be at most 16 MiB.", path);
+        }
+
+        return data;
+    }
+
+    private static string StripDataUri(string text, string path)
+    {
+        if (!text.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            return text;
+        }
+
+        var comma = text.IndexOf(',');
+        if (comma < 0 || text.LastIndexOf(";base64", comma, StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_image_content", "A data URI image must be base64 encoded.", path);
+        }
+
+        return text.Substring(comma + 1);
+    }
+
+    private static byte[] DecodeBase64(string text, string path)
+    {
+        try
+        {
+            return Convert.FromBase64String(text);
+        }
+        catch (FormatException)
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "invalid_image_content", "The image content is not valid base64.", path);
+        }
+    }
+
+    private static bool IsSupportedImage(byte[] data)
+    {
+        return (data.Length >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
+            || (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF);
+    }
+
+    // Reads the format and pixel size from the PNG or JPEG header without decoding the image.
+    internal static string InspectImage(byte[] data, string path, out int width, out int height)
+    {
+        width = 0;
+        height = 0;
+        if (data.Length >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 && data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A)
+        {
+            InspectPng(data, path, out width, out height);
+            return "png";
+        }
+
+        if (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+        {
+            InspectJpeg(data, path, out width, out height);
+            return "jpeg";
+        }
+
+        throw new ConnectorException(HttpStatusCode.BadRequest, "unsupported_image_format", "Images must be PNG or JPEG.", path);
+    }
+
+    private static void InspectPng(byte[] data, string path, out int width, out int height)
+    {
+        if (data.Length < 33 || ReadAscii(data, 12, 4) != "IHDR")
+        {
+            throw InvalidImage(path);
+        }
+
+        width = ReadInt32BigEndian(data, 16);
+        height = ReadInt32BigEndian(data, 20);
+
+        // An acTL chunk before the first IDAT marks an animated PNG.
+        long offset = 8;
+        while (offset + 8 <= data.Length)
+        {
+            var length = (uint)ReadInt32BigEndian(data, (int)offset);
+            var type = ReadAscii(data, (int)offset + 4, 4);
+            if (type == "acTL")
+            {
+                throw new ConnectorException(HttpStatusCode.BadRequest, "animated_image", "Animated images are not supported; use a still PNG or JPEG.", path);
+            }
+
+            if (type == "IDAT" || type == "IEND")
+            {
+                return;
+            }
+
+            offset += 12L + length;
+        }
+    }
+
+    private static void InspectJpeg(byte[] data, string path, out int width, out int height)
+    {
+        var position = 2;
+        while (position < data.Length)
+        {
+            if (data[position] != 0xFF)
+            {
+                throw InvalidImage(path);
+            }
+
+            while (position < data.Length && data[position] == 0xFF)
+            {
+                position++;
+            }
+
+            if (position >= data.Length)
+            {
+                break;
+            }
+
+            var marker = data[position];
+            if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7))
+            {
+                position++;
+                continue;
+            }
+
+            if (marker == 0xD9 || marker == 0xDA || position + 2 >= data.Length)
+            {
+                break;
+            }
+
+            var length = (data[position + 1] << 8) | data[position + 2];
+            if (length < 2)
+            {
+                break;
+            }
+
+            if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC)
+            {
+                if (length < 7 || position + 7 >= data.Length)
+                {
+                    break;
+                }
+
+                height = (data[position + 4] << 8) | data[position + 5];
+                width = (data[position + 6] << 8) | data[position + 7];
+                return;
+            }
+
+            position += 1 + length;
+        }
+
+        throw InvalidImage(path);
+    }
+
+    private static ConnectorException InvalidImage(string path)
+    {
+        return new ConnectorException(HttpStatusCode.BadRequest, "invalid_image", "The image header could not be read.", path);
+    }
+
+    private static int ReadInt32BigEndian(byte[] data, int offset)
+    {
+        return (data[offset] << 24) | (data[offset + 1] << 16) | (data[offset + 2] << 8) | data[offset + 3];
+    }
+
+    private static string ReadAscii(byte[] data, int offset, int count)
+    {
+        return offset + count <= data.Length ? Encoding.ASCII.GetString(data, offset, count) : string.Empty;
+    }
+
+    private static bool IsImageNameChar(char value)
+    {
+        return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9') || value == '.' || value == '_' || value == '-';
+    }
+
+    // Every image must be referenced as image:<name>. Images that no text references are appended
+    // to text state, because the decision API rejects requests that reference only some images.
+    internal static JToken ReferenceImages(JToken state, JObject questions, Dictionary<string, string> imagePaths)
+    {
+        var texts = new List<string>();
+        CollectStrings(state, texts);
+        CollectStrings(questions, texts);
+
+        var missing = imagePaths.Keys.Where(name => !texts.Any(text => ContainsImageReference(text, name))).ToList();
+        if (missing.Count == 0)
+        {
+            return state;
+        }
+
+        if (state != null && (state.Type == JTokenType.Object || state.Type == JTokenType.Array))
+        {
+            throw new ConnectorException(HttpStatusCode.BadRequest, "unreferenced_image", "Reference image '" + missing[0] + "' as image:" + missing[0] + " in the state, the instructions, or the criteria. JSON state is not changed automatically.", imagePaths[missing[0]]);
+        }
+
+        var references = string.Join(" ", missing.Select(name => ImageReferencePrefix + name));
+        var text = state == null || state.Type != JTokenType.String ? string.Empty : (string)state;
+        return new JValue(string.IsNullOrWhiteSpace(text) ? references : text + "\n\n" + references);
+    }
+
+    private static void CollectStrings(JToken token, List<string> texts)
+    {
+        if (token == null)
+        {
+            return;
+        }
+
+        if (token.Type == JTokenType.String)
+        {
+            texts.Add((string)token);
+            return;
+        }
+
+        foreach (var child in token.Children())
+        {
+            CollectStrings(child is JProperty ? ((JProperty)child).Value : child, texts);
+        }
+    }
+
+    // image:<name> counts when the name is not followed by another name character. A trailing
+    // period, as at the end of a sentence, still counts.
+    internal static bool ContainsImageReference(string text, string name)
+    {
+        var token = ImageReferencePrefix + name;
+        var index = text.IndexOf(token, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            var end = index + token.Length;
+            if (end == text.Length
+                || !IsImageNameChar(text[end])
+                || (text[end] == '.' && (end + 1 == text.Length || !IsImageNameChar(text[end + 1]))))
+            {
+                return true;
+            }
+
+            index = text.IndexOf(token, index + 1, StringComparison.Ordinal);
+        }
+
+        return false;
     }
 
     private static JToken NormalizeState(JObject body)

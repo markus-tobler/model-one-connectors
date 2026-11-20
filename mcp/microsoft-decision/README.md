@@ -1,18 +1,18 @@
-# Microsoft-Decision-1 MCP server
+# Microsoft-Decision-1.1 MCP server
 
-A local [MCP](https://modelcontextprotocol.io/) server that gives agents such as Claude Code the same decisions as the Microsoft-Decision-1 custom connector. It has one tool, `evaluate`, which sends a state and a set of yes/no (`noul`), `choice`, and `score` questions to your Microsoft-Decision-1 deployment in Microsoft Foundry and returns the typed answers. It communicates over stdio.
+A local [MCP](https://modelcontextprotocol.io/) server that gives agents such as Claude Code the same decisions as the Microsoft-Decision-1.1 custom connector. It has one tool, `evaluate`, which sends a state, optional images, and a set of yes/no (`noul`), `choice`, and `score` questions to your Microsoft-Decision-1.1 deployment in Microsoft Foundry and returns the typed answers. It communicates over stdio.
 
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/), which provides `uvx`. uv installs the required Python version itself.
-- A [Microsoft-Decision-1 deployment](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision#deploy-microsoft-decision-1), with its endpoint, deployment name, and API key.
+- A [Microsoft-Decision-1.1 deployment](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision#deploy-microsoft-decision-11), with its endpoint, deployment name, and API key.
 
 ## Configuration
 
 | Variable | Value |
 | --- | --- |
 | `MS_FOUNDRY_DECISION_1_ENDPOINT` | Endpoint of the Foundry resource, for example `https://my-resource.services.ai.azure.com`. Only the scheme, host, and port are used, so a full target URI also works. |
-| `MS_FOUNDRY_DECISION_1_DEPLOYMENT` | Deployment name, for example `Decision-1`. |
+| `MS_FOUNDRY_DECISION_1_DEPLOYMENT` | Deployment name, for example `Decision-1.1`. |
 | `MS_FOUNDRY_DECISION_1_API_KEY` | API key of the Foundry resource. |
 
 The server looks up each variable in this order and uses the first non-empty value:
@@ -55,7 +55,7 @@ uvx --from ./mcp/microsoft-decision microsoft-decision-mcp
 ```bash
 claude mcp add microsoft-decision --scope user \
   -e MS_FOUNDRY_DECISION_1_ENDPOINT=https://my-resource.services.ai.azure.com \
-  -e MS_FOUNDRY_DECISION_1_DEPLOYMENT=Decision-1 \
+  -e MS_FOUNDRY_DECISION_1_DEPLOYMENT=Decision-1.1 \
   -- uvx --from "git+https://github.com/markus-tobler/model-one-connectors#subdirectory=mcp/microsoft-decision" microsoft-decision-mcp
 ```
 
@@ -77,7 +77,7 @@ Open **Settings > Developer > Edit Config** and add the server to `claude_deskto
       ],
       "env": {
         "MS_FOUNDRY_DECISION_1_ENDPOINT": "https://my-resource.services.ai.azure.com",
-        "MS_FOUNDRY_DECISION_1_DEPLOYMENT": "Decision-1"
+        "MS_FOUNDRY_DECISION_1_DEPLOYMENT": "Decision-1.1"
       }
     }
   }
@@ -105,7 +105,31 @@ The desktop app does not load your shell's `PATH`, so set `command` to the full 
 }
 ```
 
-A choice question needs 2 to 255 options, and a score question needs 2 to 10 levels. The server rejects invalid questions before it calls Foundry. Foundry errors, such as a wrong key or an unknown deployment, are returned as tool errors with the HTTP status and response body.
+A choice question needs 2 to 255 options, and a score question needs 2 to 10 levels. The server rejects invalid questions before it calls Foundry.
+
+### Images
+
+`images` is optional and is keyed by image name. Each image is either a local file (`path`) or base64 data (`data_base64`, where a `data:` URI also works):
+
+```json
+{
+  "state": "Customer photo of the delivery: image:photo.png",
+  "images": {
+    "photo.png": { "path": "/home/me/Pictures/delivery.png" },
+    "label.jpg": { "data_base64": "/9j/4AAQSkZJRg..." }
+  },
+  "questions": {
+    "damaged": { "type": "noul", "instructions": "Does the photo show damage?" },
+    "label_readable": { "type": "noul", "instructions": "Is the shipping label in image:label.jpg readable?" }
+  }
+}
+```
+
+- Images must be still PNG or JPEG, 280 to 1568 pixels per side, and at most 16 MiB each. The server detects the format from the content, checks these limits before it calls Foundry, and does not resize images.
+- Image names may contain letters, digits, `.`, `_`, and `-`, up to 64 characters.
+- Refer to an image as `image:<name>` in the state, a question's instructions, or its criteria. If nothing refers to an image, the server appends the reference to text state. JSON state is never changed, so an unreferenced image with JSON state is an error.
+- Use absolute paths. A relative path resolves against the server's working directory, which the MCP client chooses.
+- The service allows at most 8 image references per question prompt and counts repeated references. Refer to each image once. Foundry errors, such as a wrong key or an unknown deployment, are returned as tool errors with the HTTP status and response body.
 
 ## Development
 

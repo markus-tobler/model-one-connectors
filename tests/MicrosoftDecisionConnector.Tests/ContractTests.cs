@@ -51,7 +51,25 @@ public class ContractTests
         Assert.Null(option["key"]); // The designer's array editor hides item properties named "key".
         Assert.NotNull(option["option"]);
         // The deployment comes from the connection, so the action has no model input.
-        Assert.Equal(new[] { "state", "questions" }, ((JObject)Swagger["definitions"]["EvaluateRequest"]["properties"]).Properties().Select(p => p.Name));
+        Assert.Equal(new[] { "state", "questions", "images" }, ((JObject)Swagger["definitions"]["EvaluateRequest"]["properties"]).Properties().Select(p => p.Name));
+    }
+
+    [Fact]
+    public void Images_are_rows_of_name_and_byte_content()
+    {
+        var images = Swagger["definitions"]["EvaluateRequest"]["properties"]["images"];
+        Assert.Equal("array", (string)images["type"]);
+        Assert.Equal("#/definitions/ImageRow", (string)images["items"]["$ref"]);
+        Assert.DoesNotContain("images", Swagger["definitions"]["EvaluateRequest"]["required"].Select(t => (string)t));
+
+        var row = Swagger["definitions"]["ImageRow"];
+        Assert.Equal(new[] { "name", "content" }, row["required"].Select(t => (string)t));
+        Assert.Equal("byte", (string)row["properties"]["content"]["format"]);
+        Assert.Equal(new[] { "png", "jpeg" }, row["properties"]["format"]["enum"].Select(t => (string)t));
+        Assert.Null(row["properties"]["key"]);
+
+        // Images do not change the answers, so the output schema stays driven by the questions only.
+        Assert.Null(Swagger["definitions"]["OutputSchemaRequest"]["properties"]["images"]);
     }
 
     [Fact]

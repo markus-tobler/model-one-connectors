@@ -8,6 +8,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, Field
 
+from microsoft_decision_mcp.images import Image, ImageError, ImageName, build_assets, reference_images
 from microsoft_decision_mcp.settings import Settings, SettingsError, read_keyring, resolve
 
 # Criteria descriptions and instructions may be text, a JSON object, a JSON array, or null.
@@ -70,27 +71,43 @@ def create_server(settings: Settings, transport: httpx2.AsyncBaseTransport | Non
             dict[Annotated[str, Field(min_length=1)], Question],
             Field(min_length=1, description="Questions keyed by question ID, for example is_urgent. Answers use the same keys."),
         ],
+        images: Annotated[
+            dict[ImageName, Image] | None,
+            Field(
+                description="Optional images keyed by name, each {path} for a local file or {data_base64}. "
+                "Still PNG or JPEG, 280 to 1568 pixels per side, at most 16 MiB each. Refer to an image as "
+                "image:<name> in the state, instructions, or criteria; unreferenced images are appended to text state."
+            ),
+        ] = None,
     ) -> dict[str, Any]:
-        """Evaluate a state against yes/no (noul), choice, and score questions with Microsoft-Decision-1.
+        """Evaluate a state, and optionally images, against yes/no (noul), choice, and score questions with Microsoft-Decision-1.1.
 
         Returns the model, typed answers keyed by question ID, and token usage. A noul answer has a
         yes probability; a choice answer has the selected option, confidence, and per-option
         probabilities; a score answer has the expected score, confidence, and per-level probabilities.
+
+        To evaluate images, pass them in images, for example {"photo.png": {"path": "/tmp/photo.png"}},
+        and refer to them as image:photo.png in the state, a question's instructions, or a choice
+        option's description. Images that no text refers to are appended to text state. The service
+        allows at most 8 image references per question prompt, so reference each image once.
         """
-        payload = {
-            "model": settings.deployment,
-            "state": state,
-            "questions": {key: question.model_dump(exclude_unset=True) for key, question in questions.items()},
-        }
+        question_payload = {key: question.model_dump(exclude_unset=True) for key, question in questions.items()}
+        payload: dict[str, Any] = {"model": settings.deployment, "state": state, "questions": question_payload}
+        if images:
+            try:
+                payload["assets"] = build_assets(images)
+                payload["state"] = reference_images(state, question_payload, list(images))
+            except ImageError as ex:
+                raise ToolError(str(ex)) from ex
         headers = {"api-key": settings.api_key, "Accept": "application/json"}
         try:
             async with httpx2.AsyncClient(transport=transport, timeout=60) as client:
                 response = await client.post(settings.url, json=payload, headers=headers)
         except httpx2.HTTPError as ex:
-            raise ToolError(f"Request to Microsoft-Decision-1 failed: {ex}") from ex
+            raise ToolError(f"Request to Microsoft-Decision-1.1 failed: {ex}") from ex
 
         if not response.is_success:
-            raise ToolError(f"Microsoft-Decision-1 returned HTTP {response.status_code}: {response.text}")
+            raise ToolError(f"Microsoft-Decision-1.1 returned HTTP {response.status_code}: {response.text}")
         return response.json()
 
     return server

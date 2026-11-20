@@ -1,10 +1,10 @@
-# TypeSafe Jev and Microsoft-Decision-1 custom connectors
+# TypeSafe Jev and Microsoft-Decision-1.1 custom connectors
 
 **Fast AI decisions, directly in Power Automate and Copilot Studio.**
 
-These open-source custom connectors bring [TypeSafe AI's Jev](https://typesafe.ai/) and [Microsoft-Decision-1 in Microsoft Foundry](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision) to Power Platform makers without writing API integration code. Evaluate a message, route a request, or score a case, then use the answers as named, strongly typed dynamic content in your automation.
+These open-source custom connectors bring [TypeSafe AI's Jev](https://typesafe.ai/) and [Microsoft-Decision-1.1 in Microsoft Foundry](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision) to Power Platform makers without writing API integration code. Evaluate a message, route a request, or score a case, then use the answers as named, strongly typed dynamic content in your automation.
 
-[Download the latest managed solutions](https://github.com/markus-tobler/model-one-connectors/releases/latest) · [Jev usage guide](docs/usage.md) · [Microsoft-Decision-1 usage guide](docs/microsoft-decision-usage.md) · [Contribute](CONTRIBUTING.md)
+[Download the latest managed solutions](https://github.com/markus-tobler/model-one-connectors/releases/latest) · [Jev usage guide](docs/usage.md) · [Microsoft-Decision-1.1 usage guide](docs/microsoft-decision-usage.md) · [Contribute](CONTRIBUTING.md)
 
 ## Connectors
 
@@ -13,7 +13,7 @@ Both models use the same question types and return the same typed answers, so bo
 | Connector | Model | Solution | Connection |
 | --- | --- | --- | --- |
 | **TypeSafe Jev v1** | Jev, hosted by TypeSafe AI | `JevCustomConnector` | TypeSafe API key; model selected per action |
-| **Microsoft-Decision-1** | Microsoft-Decision-1, deployed in your own Microsoft Foundry resource | `MicrosoftDecisionCustomConnector` | Foundry resource endpoint, deployment name, and API key |
+| **Microsoft-Decision-1** | Microsoft-Decision-1.1, deployed in your own Microsoft Foundry resource | `MicrosoftDecisionCustomConnector` | Foundry resource endpoint, deployment name, and API key |
 
 ## Why Jev?
 
@@ -66,19 +66,19 @@ See the [usage guide](docs/usage.md) for the complete example, including questio
 
 See the [usage guide](docs/usage.md) for a detailed Power Automate example, question types, input schemas, dynamic outputs, and error handling.
 
-### Microsoft-Decision-1
+### Microsoft-Decision-1.1
 
-1. [Deploy Microsoft-Decision-1](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision#deploy-microsoft-decision-1) in a Microsoft Foundry resource, and copy the endpoint, deployment name, and API key from the deployment details page.
+1. [Deploy Microsoft-Decision-1.1](https://learn.microsoft.com/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision#deploy-microsoft-decision-11) in a Microsoft Foundry resource, and copy the endpoint, deployment name, and API key from the deployment details page.
 2. Download the managed `MicrosoftDecisionCustomConnector` solution from the [latest release](https://github.com/markus-tobler/model-one-connectors/releases/latest) and import it into your Power Platform environment.
 3. Create a connection for **Microsoft-Decision-1** with the endpoint, deployment name, and API key.
-4. Add **Evaluate with Microsoft-Decision-1** to a flow, provide the state to evaluate, and define one or more questions.
+4. Add **Evaluate with Microsoft-Decision-1.1** to a flow, provide the state to evaluate, and define one or more questions.
 5. Use the generated answer fields as dynamic content in later actions and conditions.
 
-See the [Microsoft-Decision-1 usage guide](docs/microsoft-decision-usage.md) for connection details, limits, and error handling.
+See the [Microsoft-Decision-1.1 usage guide](docs/microsoft-decision-usage.md) for connection details, limits, and error handling.
 
-### Microsoft-Decision-1 for local agents (MCP)
+### Microsoft-Decision-1.1 for local agents (MCP)
 
-The [Microsoft-Decision-1 MCP server](mcp/microsoft-decision/README.md) offers the same evaluation to local agents such as Claude Code. It requires [uv](https://docs.astral.sh/uv/) and runs with `uvx`:
+The [Microsoft-Decision-1.1 MCP server](mcp/microsoft-decision/README.md) offers the same evaluation to local agents such as Claude Code. It requires [uv](https://docs.astral.sh/uv/) and runs with `uvx`:
 
 ```bash
 claude mcp add microsoft-decision -- uvx --from "git+https://github.com/markus-tobler/model-one-connectors#subdirectory=mcp/microsoft-decision" microsoft-decision-mcp
@@ -96,7 +96,7 @@ To report a vulnerability, follow [SECURITY.md](SECURITY.md) instead of opening 
 
 ## Disclaimer
 
-This is an independent community project. It is not affiliated with, endorsed by, or supported by TypeSafe AI or Microsoft. TypeSafe, Jev, Microsoft, Microsoft Foundry, Microsoft-Decision-1, Power Platform, Power Automate, and Copilot Studio are trademarks of their respective owners. Use of the TypeSafe API is subject to TypeSafe's own terms, and use of Microsoft Foundry is subject to Microsoft's terms for your Azure subscription.
+This is an independent community project. It is not affiliated with, endorsed by, or supported by TypeSafe AI or Microsoft. TypeSafe, Jev, Microsoft, Microsoft Foundry, Microsoft-Decision-1.1, Power Platform, Power Automate, and Copilot Studio are trademarks of their respective owners. Use of the TypeSafe API is subject to TypeSafe's own terms, and use of Microsoft Foundry is subject to Microsoft's terms for your Azure subscription.
 
 ## License
 

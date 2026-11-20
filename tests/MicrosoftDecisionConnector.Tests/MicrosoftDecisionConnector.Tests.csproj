@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../assets/**" LinkBase="Assets" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../solutions/MicrosoftDecisionCustomConnector/src/Connectors/*" LinkBase="Connector" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
